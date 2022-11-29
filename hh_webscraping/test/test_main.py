@@ -46,19 +46,22 @@ class TestRequestsFunctions(TestCase):
    """Test functions that make http requests and return information from web pages"""
    def setUp(self) -> None:
       self.listpage_url = 'https://spb.hh.ru/search/vacancy?text=python&from=suggest_post&area=2'
-      self.detailspage_url = 'https://spb.hh.ru/search/vacancy?text=python&from=suggest_post&area=2'
+      self.detailspage_url = 'https://spb.hh.ru/vacancy/72232525?from=vacancy_search_list&query=python'
+      self.session = requests.Session()
       return super().setUp()
 
    def test_from_joblist_page_get_html_text(self):
-      response = from_joblist_page_get_html_text(self.listpage_url)
-      self.assertTrue(response != None)
-      self.assertRegex(response, '<!DOCTYPE html>')
-
-   def test_from_jobdetails_page_get_html_text(self):
-      response = from_jobdetails_page_get_html_text(self.detailspage_url)
+      response = from_joblist_page_get_html_text(self.listpage_url,
+                                                 self.session)
       self.assertTrue(response != None)
       self.assertRegex(response, '<!DOCTYPE html>')
       self.assertEqual(len(re.findall('serp-item__title', response)), 40)  # 100 in case we use selenium
+
+   def test_from_jobdetails_page_get_html_text(self):
+      response = from_jobdetails_page_get_html_text(self.detailspage_url,
+                                                    self.session)
+      self.assertTrue(response != None)
+      self.assertRegex(response, '<!DOCTYPE html>')
 
 
 class TestParserFunctions(TestCase):
@@ -91,16 +94,21 @@ class TestRequestMultiplePagesFunctions(TestCase):
    def setUp(self) -> None:
       self.area = 2
       self.query = "flask"
+      self.session = requests.Session()
       return super().setUp()
 
    def test_from_all_list_pages_get_jobs_urls(self):
-      response = from_all_list_pages_get_jobs_urls(self.area, self.query)
+      response = from_all_list_pages_get_jobs_urls(self.area,
+                                                   self.query,
+                                                   self.session)
       self.assertGreaterEqual(len(response), 1)
 
    def test_from_all_details_pages_get_skills(self):
       details_pages_urls_list = from_all_list_pages_get_jobs_urls(self.area,
-                                                                  self.query)
-      response = from_all_details_pages_get_skills(details_pages_urls_list)
+                                                                  self.query,
+                                                                  self.session)
+      response = from_all_details_pages_get_skills(details_pages_urls_list,
+                                                   self.session)
       self.assertGreaterEqual(len(response), 1)
 
    def test_main(self):
