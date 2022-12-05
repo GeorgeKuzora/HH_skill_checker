@@ -1,19 +1,21 @@
+import asyncio
+import requests
 from collections import Counter
 from bs4 import BeautifulSoup
-import requests
+from aiohttp import ClientSession
 
 
 def get_user_input() -> tuple:
     """
     get user's input for area code and keyword
-    return tuple with user inputed data
+    return tuple with user inputed data.
     """
     area = input('Please enter an area code: ')
-    query = input('Please enter a search query: ')
-    return area, query
+    keyword = input('Please enter a search query: ')
+    return area, keyword
 
 
-def get_joblist_page_url(area: int, query: str, page_number: int) -> str:
+def get_joblist_page_url(area: int, keyword: str, page_number: int) -> str:
     """Get url for pages with jobs from
         paginated search results for area and keyword"""
     url_base = ['https://spb.hh.ru/search/vacancy?',
@@ -21,35 +23,68 @@ def get_joblist_page_url(area: int, query: str, page_number: int) -> str:
                 '&ored_clusters=true&enable_snippets=true&',
                 '&hhtmFrom=vacancy_search_list']
     url_area = 'area=' + str(area)
-    url_text = 'text=' + query
+    url_text = 'text=' + keyword
     url_page = 'page='
     url = str(url_base[0] + url_text + url_base[1] + url_area + url_base[2] \
               + url_page + str(page_number) + url_base[3])
     return url
 
-def from_joblist_page_get_html_text(list_url: str, session) -> str:
-    """get html text from the requested jobs list page.
-    IO based function"""
-    with session:
-    #     request_page = session.get(list_url)
-    # request_page = requests.get(list_url)
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 6.3; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/45.0.2454.85 Safari/537.36'}
-        request_page = session.get(list_url, headers = headers)
-    print('Getting HTML-code from... %s' % list_url)
-    return request_page.text
 
-def check_if_page_contains_jobs_urls(html: str) -> bool:
-    """check if job list page contains any job offer urls. Return True if yes"""
-    is_urls = False
+def find_how_many_pages_with_jobs_urls(area: int,
+                                       keyword: str,
+                                       session: requests.Session) -> int:
+    """
+    Scrap first page for requested area and keyword.
+    Find how many pages with job's links are returned.
+    Return pages number integer
+    """
+    print('Calculating web-pages number')
+    url = get_joblist_page_url(area, keyword, 0)
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 6.3; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/45.0.2454.85 Safari/537.36'}
+    request_page = session.get(url=url,
+                               headers = headers)
+    html = request_page.text
     soup = BeautifulSoup(html, 'lxml')
-    _job_cards = soup.find_all('a', class_='serp-item__title')
-    if _job_cards:
-        is_urls = True
-    return is_urls
+    page_urls = soup.find_all('a', class_='bloko-button')
+    try:
+        page_number = int(page_urls[len(page_urls) - 2].string)
+    except ValueError:
+        page_number = 0
 
+    print(f'Found {page_number + 1} pages with job urls')
+    return page_number
 
-def from_list_page_html_get_jobs_urls(html: str) -> list:
-    """Get list of all jobs links from html code"""
+def skills_count(skills_list: list) -> dict:
+    """
+    Count skills in a list.
+    Return dictionary where: skill as key; quantity as keyvalue.
+    """
+    cnt = Counter()
+    for skill in skills_list:
+        cnt[skill] += 1
+    return cnt
+
+def write_counted_skills_into_file(counted_skills: dict) -> None:
+    """Write counted skills into txt file"""
+    sorted_counted_skills = sorted(counted_skills.items(),
+                                   key=lambda x: x[1],
+                                   reverse=True)
+    with open('skills.txt', 'w') as skills_file:
+        for skill in sorted_counted_skills:
+            print((skill), file = skills_file)
+
+async def from_jobslist_page_get_all_urls(list_url: str,
+                                          session: ClientSession) -> list:
+    """
+    Request web page with list of jobs. Get html source from the page.
+    Find all job urls in the html source. Return list with the job urls.
+    """
+    print('Getting HTML-code from list page... %s' % list_url)
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 6.3; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/45.0.2454.85 Safari/537.36'}
+    request_page = await session.request(method='GET',
+                                         url=list_url,
+                                         headers = headers)
+    html = await request_page.text()
     jobs_urls_list = []
     soup = BeautifulSoup(html, 'lxml')
     urls = soup.find_all('a', class_='serp-item__title')
@@ -58,17 +93,19 @@ def from_list_page_html_get_jobs_urls(html: str) -> list:
         jobs_urls_list.append(job_link[0])
     return jobs_urls_list
 
-def from_jobdetails_page_get_html_text(details_url: str, session) -> str:
-    """get html text from the requested jobs details page.
-    IO based function"""
-    with session:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 6.3; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/45.0.2454.85 Safari/537.36'}
-        request_page = session.get(details_url, headers = headers)
-    print('Getting HTML-code from... %s' % details_url)
-    return request_page.text
-
-def from_details_page_html_get_skills(html: str) -> list:
-    """Get list of all required skills from html code"""
+async def from_jobdetails_page_get_all_skills(details_url: str,
+                                              session: ClientSession) -> list:
+    """
+    Request web page with job's details. Get html source from the page.
+    Find additional skills required for job in the html source.
+    Return list with the requeired additional skills.
+    """
+    print('Getting HTML-code from details page... %s' % details_url)
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 6.3; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/45.0.2454.85 Safari/537.36'}
+    request_page = await session.request(method='GET',
+                                         url=details_url,
+                                         headers = headers)
+    html = await request_page.text()
     skills_list = []
     soup = BeautifulSoup(html, 'lxml')
     skills = soup.find_all('span',
@@ -77,61 +114,70 @@ def from_details_page_html_get_skills(html: str) -> list:
         skills_list.append(skill.text)
     return skills_list
 
-def skills_count(skills_list: list) -> dict:
-    """Count all skills and return dictionary where key is skill, value is quantity"""
-    cnt = Counter()
-    for skill in skills_list:
-        cnt[skill] += 1
-    return cnt
-
-def write_counted_skills_into_file(counted_skills: dict) -> None:
-    """Write counted job's skills into txt file"""
-    sorted_counted_skills = sorted(counted_skills.items(),
-                                   key=lambda x: x[1],
-                                   reverse=True)
-    with open('skills.txt', 'w') as skills_file:
-        for skill in sorted_counted_skills:
-            print((skill), file = skills_file)
-
-def from_all_list_pages_get_jobs_urls(area: int, query: str, session) -> list:
-    """Get urls from all keyword search pages and return them as a list"""
-    job_urls_list = []
-    list_page_number = 0
-    list_page_contains_urls = True
-    while list_page_contains_urls:
-        list_page_url = get_joblist_page_url(area, query, list_page_number)
-        job_list_html = from_joblist_page_get_html_text(list_page_url, session)
-        list_page_contains_urls = check_if_page_contains_jobs_urls(job_list_html)
-        if list_page_contains_urls:
-            page_job_urls_list = from_list_page_html_get_jobs_urls(job_list_html)
-            job_urls_list.extend(page_job_urls_list)
-            list_page_number += 1
-    return job_urls_list
-
-def from_all_details_pages_get_skills(details_pages_urls_list: list, session) -> list:
-    """Get all skills from all details pages urls. Return them as a list"""
-    skills_list = []
-    for url in details_pages_urls_list:
-        print('%d from %d' % (details_pages_urls_list.index(url) + 1,
-                              len(details_pages_urls_list)))
-        html = from_jobdetails_page_get_html_text(url, session)
-        skills = from_details_page_html_get_skills(html)
+async def from_joblist_page_get_all_skills(listpage_url: str) -> list:
+    """
+    Get all job urls from web page with list of jobs. For every job details url
+    get skills required for the jobs. Return skills for all the jobs as a list.
+    """
+    async with ClientSession() as session:
+        skills_list = []
+        raw_skills_list = []
+        get_skills_from_joblist_tasks = []
+        details_urls_list = await from_jobslist_page_get_all_urls(listpage_url, session)
+        for details_url in details_urls_list:
+            get_skills_from_details_url_task = asyncio.create_task(
+                from_jobdetails_page_get_all_skills(details_url,
+                                                    session)
+            )
+            get_skills_from_joblist_tasks.append(get_skills_from_details_url_task)
+        raw_skills_list = await asyncio.gather(*get_skills_from_joblist_tasks,
+                                               return_exceptions=True)
+    for skills in raw_skills_list:
         skills_list.extend(skills)
     return skills_list
 
-    
-def main(area=None, query=None) -> None:
-    """Main function. Makes other functions in right order"""
-    if not area and query:
+async def from_all_joblist_pages_get_skills(area: int,
+                                            keyword: str,
+                                            pages_number: int) -> list:
+    """
+    Get all web pages with lists of jobs according to area code and ketword.
+    For all web pages with lists of jobs get additional skills required.
+    Return skills required for jobs as a list.
+    """
+    get_skills_from_all_pages_tasks = []
+    for list_page_number in range(pages_number):
+        list_page_url = get_joblist_page_url(area, keyword, list_page_number)
+        get_one_joblist_skills_task = asyncio.create_task(
+            from_joblist_page_get_all_skills(list_page_url)
+        )
+        get_skills_from_all_pages_tasks.append(get_one_joblist_skills_task)
+    raw_skills_list = await asyncio.gather(*get_skills_from_all_pages_tasks,
+                                          return_exceptions=True)
+    skills_list = []
+    for skills in raw_skills_list:
+        skills_list.extend(skills)
+    return skills_list
+
+
+def main(area=None, keyword='') -> None:
+    """
+    Main function. Get user input for search. Find how many pages with job urls
+    is exists. For all web pages with job urls find required skills.
+    Count required skills. Write counted skills into file.
+    """
+    if not area or keyword:
         user_input = get_user_input()
         area = user_input[0]
-        query = user_input[1]
-    session = requests.Session()
-    jobs_urls = from_all_list_pages_get_jobs_urls(area, query, session)
-    skills = from_all_details_pages_get_skills(jobs_urls, session)
+        keyword = user_input[1]
+    with requests.Session() as session:
+        pages_number = find_how_many_pages_with_jobs_urls(area,
+                                                            keyword,
+                                                            session)
+    skills = asyncio.run(from_all_joblist_pages_get_skills(area,
+                                               keyword,
+                                               pages_number))
     counted_skills = skills_count(skills)
     write_counted_skills_into_file(counted_skills)
-
 
 if __name__ == '__main__':
     main()
